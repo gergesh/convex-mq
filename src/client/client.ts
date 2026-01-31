@@ -49,15 +49,15 @@ export interface QueueFunctions<T> {
   nack: FunctionReference<"mutation", any, any, any>;
 }
 
-export interface ConsumeOptions {
+export type ConsumeOptions = {
   /** Maximum messages to claim per batch. Defaults to 10. */
   batchSize?: number;
-}
+} & Record<string, unknown>;
 
-export interface ConsumePollingOptions extends ConsumeOptions {
+export type ConsumePollingOptions = {
   /** Polling interval in milliseconds. Defaults to 1000. */
   pollIntervalMs?: number;
-}
+} & ConsumeOptions;
 
 // ---------------------------------------------------------------------------
 // Reactive consumer (ConvexClient with onUpdate / subscribe)
@@ -83,6 +83,12 @@ export interface ConsumePollingOptions extends ConsumeOptions {
  *   for (const msg of messages) {
  *     await sendEmail(msg.payload.to, msg.payload.body);
  *   }
+ * }, { batchSize: 5 });
+ *
+ * // With filter args (library mode):
+ * const stop = consume(client, internal.tasks, handler, {
+ *   worker: "worker-1",  // forwarded to peek/claim
+ *   batchSize: 5,
  * });
  *
  * // Later: stop();
@@ -94,7 +100,7 @@ export function consume<T>(
   handler: (messages: ClaimedMessage<T>[]) => Promise<void>,
   options?: ConsumeOptions,
 ): () => void {
-  const { batchSize = 10 } = options ?? {};
+  const { batchSize = 10, ...extraArgs } = options ?? {};
   let processing = false;
   let hasPending = false;
 
@@ -108,6 +114,7 @@ export function consume<T>(
       while (hasPending) {
         const claimed = (await client.mutation(fns.claim, {
           limit: batchSize,
+          ...extraArgs,
         })) as ClaimedMessage<T>[];
 
         if (claimed.length === 0) {
@@ -160,7 +167,7 @@ export function consume<T>(
     }
   };
 
-  const unsubscribe = client.onUpdate(fns.peek, {}, (result: boolean) => {
+  const unsubscribe = client.onUpdate(fns.peek, { ...extraArgs }, (result: boolean) => {
     hasPending = result;
     if (hasPending) {
       void processLoop();
@@ -203,17 +210,18 @@ export function consumePolling<T>(
   handler: (messages: ClaimedMessage<T>[]) => Promise<void>,
   options?: ConsumePollingOptions,
 ): AbortController {
-  const { batchSize = 10, pollIntervalMs = 1000 } = options ?? {};
+  const { batchSize = 10, pollIntervalMs = 1000, ...extraArgs } = options ?? {};
   const controller = new AbortController();
 
   const poll = async () => {
     while (!controller.signal.aborted) {
       try {
-        const hasPending = (await client.query(fns.peek, {})) as boolean;
+        const hasPending = (await client.query(fns.peek, { ...extraArgs })) as boolean;
 
         if (hasPending) {
           const claimed = (await client.mutation(fns.claim, {
             limit: batchSize,
+            ...extraArgs,
           })) as ClaimedMessage<T>[];
 
           for (const msg of claimed) {

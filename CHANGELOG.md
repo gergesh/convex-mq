@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.0
+
+Library mode — use ConvexMQ with your own schema tables.
+
+- **Library mode** (`convex-mq/table`) — define queue tables in your own schema with `messageQueueTable()`, enabling custom indexes and filtered consumption
+- **Filtered consumption** — `api()` accepts a `filterConfig` to generate peek/claim functions that use custom indexes (e.g., consume only tasks for a specific worker)
+- **`modulePath` defaults to table name** — no longer required in most setups; override only if your file name differs from the table name
+- **`consume()` options simplified** — filter args and options merged into a single object (e.g., `consume(client, fns, handler, { worker: "w1", batchSize: 5 })`)
+- **`messageQueueTable()`** — schema helper that adds system fields (`status`, `attempts`, `maxAttempts`, `visibilityTimeoutMs`, `claimId`) and a default `by_status` index
+- Library mode claimed messages use `data` (not `payload`) since fields are top-level
+
 ## 0.1.0
 
 Initial release.

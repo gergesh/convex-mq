@@ -11,6 +11,7 @@
 import type * as emailQueue from "../emailQueue.js";
 import type * as secureQueue from "../secureQueue.js";
 import type * as taskQueue from "../taskQueue.js";
+import type * as workerTasks from "../workerTasks.js";
 
 import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
 
@@ -18,6 +19,7 @@ declare const fullApi: ApiFromModules<{
   emailQueue: typeof emailQueue;
   secureQueue: typeof secureQueue;
   taskQueue: typeof taskQueue;
+  workerTasks: typeof workerTasks;
 }>;
 
 /**
