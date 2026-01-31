@@ -45,7 +45,6 @@ describe("consume() integration", () => {
             processed.push(msg.payload);
           }
         },
-        undefined,
         { batchSize: 5 },
       );
 
@@ -96,7 +95,6 @@ describe("consume() integration", () => {
           callCount++;
           throw new Error("handler failure");
         },
-        undefined,
         { batchSize: 1 },
       );
 
@@ -147,7 +145,6 @@ describe("consume() integration", () => {
           processed.push(msg.payload);
         }
       },
-      undefined,
       { batchSize: 10, pollIntervalMs: 500 },
     );
 

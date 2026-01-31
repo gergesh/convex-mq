@@ -1,6 +1,6 @@
 {
   "name": "convex-mq",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
   "description": "A typed message queue component for Convex with reactive consumers, visibility timeouts, and automatic retries.",
   "keywords": [

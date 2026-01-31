@@ -67,13 +67,9 @@ describe("concurrent consumers", () => {
 
     await new Promise((r) => setTimeout(r, 1000));
 
-    const stop1 = consume(client1, api.emailQueue, makeHandler("consumer1"), undefined, {
-      batchSize: 3,
-    });
+    const stop1 = consume(client1, api.emailQueue, makeHandler("consumer1"), { batchSize: 3 });
 
-    const stop2 = consume(client2, api.emailQueue, makeHandler("consumer2"), undefined, {
-      batchSize: 3,
-    });
+    const stop2 = consume(client2, api.emailQueue, makeHandler("consumer2"), { batchSize: 3 });
 
     const deadline = Date.now() + 30_000;
     while (processed.length < MESSAGE_COUNT && Date.now() < deadline) {

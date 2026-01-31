@@ -1,14 +1,9 @@
 import { defineSchema } from "convex/server";
-import { messageQueueTable } from "../src/client/table.js";
-import { v } from "convex/values";
+import { taskQueue } from "./workerTasks.js";
 
 export default defineSchema({
-  // Library-mode queue table with custom indexes
-  workerTasks: messageQueueTable({
-    worker: v.string(),
-    task: v.string(),
-    fileSize: v.number(),
-  })
+  workerTasks: taskQueue
+    .table()
     .index("by_worker", ["status", "worker"])
     .index("by_size", ["status", "fileSize"]),
 });

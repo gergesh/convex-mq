@@ -6,7 +6,7 @@ import { MessageQueue } from "../src/client/table.js";
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server.js";
 
-const taskQueue = new MessageQueue("workerTasks", {
+export const taskQueue = new MessageQueue("workerTasks", {
   worker: v.string(),
   task: v.string(),
   fileSize: v.number(),

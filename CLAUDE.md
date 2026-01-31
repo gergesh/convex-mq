@@ -83,7 +83,8 @@ Tests use **vitest** (not bun:test) because `convex-test` depends on `import.met
 
 ## Working with library mode
 
-- `messageQueueTable(fields)` returns a table definition — chain `.index()` for custom indexes.
-- `MessageQueue(tableName, fields, options?)` — fields must match what was passed to `messageQueueTable()`.
+- `MessageQueue(tableName, fields, options?)` — define fields once, export the instance.
+- `.table()` generates the schema table definition — use in `defineSchema()`, chain `.index()` for custom indexes.
 - `api()` can be called multiple times with different `filterConfig` to generate multiple filtered views (e.g., `peekByWorker`, `claimByWorker`).
 - The `reclaimStale` export is required — it's the visibility timeout handler called by the scheduler. Must be exported from the module at `modulePath`.
+- `messageQueueTable(fields)` still exists as a standalone helper but `.table()` is preferred to avoid field duplication.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- **`.table()` method** — define fields once on `MessageQueue`, generate the schema table definition via `taskQueue.table()` instead of duplicating fields in `messageQueueTable()`
+- `messageQueueTable()` still works but `.table()` is now the recommended approach
+
 ## 0.2.0
 
 Library mode — use ConvexMQ with your own schema tables.

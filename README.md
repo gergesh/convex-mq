@@ -224,10 +224,27 @@ export const { peek, claim, ack, nack, publish, publishBatch, reclaimStale } = t
 );
 ```
 
-The module path defaults to the table name (`"tasks"` → scheduler calls `"tasks:reclaimStale"`). If your file name differs from the table name, pass `modulePath` explicitly:
+### 2. Add the table to your schema
 
 ```ts
-const taskQueue = new MessageQueue("tasks", { ... }, {
+// convex/schema.ts
+import { defineSchema } from "convex/server";
+import { taskQueue } from "./tasks";
+
+export default defineSchema({
+  tasks: taskQueue
+    .table()
+    .index("by_worker", ["status", "worker"])
+    .index("by_size", ["status", "fileSize"]),
+});
+```
+
+`.table()` adds the system fields (`status`, `attempts`, `maxAttempts`, `visibilityTimeoutMs`, `claimId`) and a default `by_status` index. Your fields are stored at the top level, so they're indexable. Chain `.index()` to add custom indexes.
+
+The module path defaults to the table name (`"tasks"` → scheduler calls `"tasks:reclaimStale"`). If your file name differs, pass `modulePath`:
+
+```ts
+export const taskQueue = new MessageQueue("tasks", { ... }, {
   modulePath: "myTasks",  // for convex/myTasks.ts
 });
 ```
@@ -458,7 +475,7 @@ new MessageQueue(tableName, fields, options?)
 ```
 
 - `tableName` — must match your schema table name
-- `fields` — validator fields (same as passed to `messageQueueTable()`)
+- `fields` — validator fields for your message data
 - `options.defaultMaxAttempts` — default: 3
 - `options.defaultVisibilityTimeoutMs` — default: 30000
 - `options.modulePath` — defaults to `tableName`
@@ -474,9 +491,9 @@ Optional `filterConfig`:
 
 Claimed messages have `{ id, claimId, data, attempts }` (note: `data` not `payload`).
 
-### `messageQueueTable(fields)` (from `convex-mq/table`)
+#### `.table()`
 
-Schema helper that adds system fields and the default `by_status` index. Chain `.index()` to add custom indexes (prefix with `"status"` for filtered consumption).
+Returns a table definition for use in `defineSchema()`. Adds system fields and a default `by_status` index. Chain `.index()` to add custom indexes (prefix with `"status"` for filtered consumption).
 
 ### `consume(client, fns, handler, options?)`
 

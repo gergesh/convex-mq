@@ -3,29 +3,26 @@
  *
  * @example
  * ```ts
- * // convex/schema.ts
- * import { messageQueueTable } from "convex-mq/table";
- *
- * export default defineSchema({
- *   tasks: messageQueueTable({
- *     worker: v.string(),
- *     task: v.string(),
- *   }).index("by_worker", ["status", "worker", "_creationTime"]),
- * });
- * ```
- *
- * ```ts
  * // convex/tasks.ts
  * import { MessageQueue } from "convex-mq/table";
  *
- * const taskQueue = new MessageQueue("tasks", {
+ * export const taskQueue = new MessageQueue("tasks", {
  *   worker: v.string(),
  *   task: v.string(),
  * });
  *
- * // Module path defaults to table name ("tasks" → "tasks:reclaimStale")
  * export const { peek, claim, ack, nack, publish, reclaimStale } =
  *   taskQueue.api(internalQuery, internalMutation);
+ * ```
+ *
+ * ```ts
+ * // convex/schema.ts
+ * import { taskQueue } from "./tasks";
+ *
+ * export default defineSchema({
+ *   tasks: taskQueue.table()
+ *     .index("by_worker", ["status", "worker"]),
+ * });
  * ```
  */
 import {
@@ -158,8 +155,7 @@ function generateClaimId(): string {
  *
  * @example
  * ```ts
- * // Module path defaults to table name ("tasks" → scheduler calls "tasks:reclaimStale")
- * const taskQueue = new MessageQueue("tasks", {
+ * export const taskQueue = new MessageQueue("tasks", {
  *   worker: v.string(),
  *   task: v.string(),
  * });
@@ -169,7 +165,7 @@ function generateClaimId(): string {
  *   taskQueue.api(internalQuery, internalMutation);
  *
  * // With filter
- * export const { peek, claim, ack, nack, publish, reclaimStale } =
+ * export const { peek: peekByWorker, claim: claimByWorker } =
  *   taskQueue.api(internalQuery, internalMutation, {
  *     filterArgs: { worker: v.string() },
  *     filter: (q, { worker }) => q.withIndex("by_worker", q =>
@@ -198,6 +194,26 @@ export class MessageQueue<
       defaultMaxAttempts: options?.defaultMaxAttempts ?? 3,
       defaultVisibilityTimeoutMs: options?.defaultVisibilityTimeoutMs ?? 30_000,
     };
+  }
+
+  /**
+   * Generate a table definition for use in `defineSchema`.
+   * Adds system fields and a default `by_status` index.
+   * Chain `.index(...)` to add custom indexes.
+   *
+   * @example
+   * ```ts
+   * export default defineSchema({
+   *   tasks: taskQueue.table()
+   *     .index("by_worker", ["status", "worker"]),
+   * });
+   * ```
+   */
+  table() {
+    return defineTable({
+      ...this.fields,
+      ...systemFields,
+    }).index("by_status", ["status"] as any);
   }
 
   /**
