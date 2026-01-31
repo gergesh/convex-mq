@@ -125,8 +125,11 @@ export function consume<T>(
               client.mutation(fns.ack, { messageId: msg.id, claimId: msg.claimId }),
             ),
           );
-        } catch {
+        } catch (batchError) {
           // Batch failed — process individually so partial success is possible.
+          // The batchError is intentionally not logged here since individual
+          // message failures will be captured via nack below.
+          void batchError;
           for (const msg of claimed) {
             try {
               await handler([msg]);
@@ -359,8 +362,11 @@ export function consumeFiltered<T, Args extends Record<string, unknown>>(
               client.mutation(fns.ack, { messageId: msg.id, claimId: msg.claimId }),
             ),
           );
-        } catch {
-          // Batch failed — process individually
+        } catch (batchError) {
+          // Batch failed — process individually so partial success is possible.
+          // The batchError is intentionally not logged here since individual
+          // message failures will be captured via nack below.
+          void batchError;
           for (const msg of claimed) {
             try {
               await handler([msg]);
