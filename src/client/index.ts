@@ -20,6 +20,8 @@ type PublicApi = {
     claim: FunctionReference<"mutation", "internal", any, any>;
     ack: FunctionReference<"mutation", "internal", any, any>;
     nack: FunctionReference<"mutation", "internal", any, any>;
+    listPending: FunctionReference<"query", "internal", any, any>;
+    claimByIds: FunctionReference<"mutation", "internal", any, any>;
   };
 };
 
@@ -44,6 +46,13 @@ export interface MessageQueueOptions {
 export interface ClaimedMessage<T> {
   id: MessageId;
   claimId: string;
+  payload: T;
+  attempts: number;
+}
+
+/** A pending message returned by listPending, before claiming. */
+export interface PendingMessage<T> {
+  id: MessageId;
   payload: T;
   attempts: number;
 }
@@ -111,6 +120,15 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
    * // Or use internalQuery/internalMutation for deploy-key-only access:
    * export const { peek, claim, ack, nack } =
    *   emailQueue.api(internalQuery, internalMutation);
+   *
+   * // For custom filtering, use listPending in your own query:
+   * export const getTasksForWorker = query({
+   *   args: { worker: v.string() },
+   *   handler: async (ctx, args) => {
+   *     const pending = await taskQueue.listPending(ctx);
+   *     return pending.filter(msg => msg.payload.worker === args.worker);
+   *   },
+   * });
    * ```
    */
   api<DataModel extends GenericDataModel, Visibility extends "public" | "internal" = "public">(
@@ -152,6 +170,16 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
       publishBatch: mutation({
         args: { messages: v.array(v.object(self.validator.fields)) },
         handler: async (ctx, args) => self.publishBatch(ctx, args.messages as Payload[]),
+      }),
+
+      listPending: query({
+        args: { limit: v.optional(v.number()) },
+        handler: async (ctx, args) => self.listPending(ctx, args.limit),
+      }),
+
+      claimByIds: mutation({
+        args: { messageIds: v.array(v.string()) },
+        handler: async (ctx, args) => self.claimByIds(ctx, args.messageIds),
       }),
     };
   }
@@ -227,5 +255,58 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
       error,
     });
     return result as ExhaustedMessage<Payload> | null;
+  }
+
+  /**
+   * List pending messages for custom filtering.
+   *
+   * Use this in your own queries to implement custom filtering logic.
+   * The returned messages can be filtered and then claimed with `claimByIds`.
+   *
+   * @example
+   * ```ts
+   * // Custom query that filters by worker
+   * export const getTasksForWorker = query({
+   *   args: { worker: v.string() },
+   *   handler: async (ctx, args) => {
+   *     const pending = await taskQueue.listPending(ctx);
+   *     return pending.filter(msg => msg.payload.worker === args.worker);
+   *   },
+   * });
+   * ```
+   */
+  async listPending(ctx: RunQueryCtx, limit?: number): Promise<PendingMessage<Payload>[]> {
+    const raw = await ctx.runQuery(this.component.public.listPending, { limit });
+    return raw as PendingMessage<Payload>[];
+  }
+
+  /**
+   * Claim specific messages by their IDs.
+   *
+   * Use this after filtering messages from `listPending` to claim
+   * only the ones you want. Messages that are no longer pending
+   * (already claimed by another consumer) are silently skipped.
+   *
+   * @example
+   * ```ts
+   * // Custom mutation that claims filtered messages
+   * export const claimTasksForWorker = mutation({
+   *   args: { worker: v.string(), limit: v.optional(v.number()) },
+   *   handler: async (ctx, args) => {
+   *     const pending = await taskQueue.listPending(ctx, args.limit ?? 10);
+   *     const matching = pending.filter(msg => msg.payload.worker === args.worker);
+   *     return await taskQueue.claimByIds(ctx, matching.map(m => m.id));
+   *   },
+   * });
+   * ```
+   */
+  async claimByIds(
+    ctx: RunMutationCtx,
+    messageIds: (MessageId | string)[],
+  ): Promise<ClaimedMessage<Payload>[]> {
+    const raw = await ctx.runMutation(this.component.public.claimByIds, {
+      messageIds: messageIds as string[],
+    });
+    return raw as ClaimedMessage<Payload>[];
   }
 }

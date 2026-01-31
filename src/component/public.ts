@@ -214,3 +214,96 @@ export const nack = mutation({
     }
   },
 });
+
+/**
+ * List pending messages for custom filtering.
+ *
+ * Returns up to `limit` pending messages with their IDs and payloads.
+ * Use this to implement custom filtering logic in your own code,
+ * then call `claimByIds` to claim the messages you want.
+ */
+export const listPending = query({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      id: v.string(),
+      payload: v.any(),
+      attempts: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 100;
+    const pending = await ctx.db
+      .query("messages")
+      .withIndex("by_status", (q) => q.eq("status", "pending"))
+      .take(limit);
+
+    return pending.map((msg) => ({
+      id: msg._id as string,
+      payload: msg.payload,
+      attempts: msg.attempts,
+    }));
+  },
+});
+
+/**
+ * Claim specific messages by their IDs.
+ *
+ * Use this after filtering messages from `listPending` to claim
+ * only the ones you want. Messages that are no longer pending
+ * (already claimed by another consumer) are silently skipped.
+ */
+export const claimByIds = mutation({
+  args: {
+    messageIds: v.array(v.string()),
+  },
+  returns: v.array(
+    v.object({
+      id: v.string(),
+      claimId: v.string(),
+      payload: v.any(),
+      attempts: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const claimed: Array<{
+      id: string;
+      claimId: string;
+      payload: unknown;
+      attempts: number;
+    }> = [];
+
+    for (const messageId of args.messageIds) {
+      const id = ctx.db.normalizeId("messages", messageId);
+      if (id === null) continue;
+
+      const msg = await ctx.db.get(id);
+      if (msg === null) continue;
+      if (msg.status !== "pending") continue;
+
+      const attempts = msg.attempts + 1;
+      const claimId = generateClaimId();
+      await ctx.db.patch(msg._id, {
+        status: "claimed",
+        attempts,
+        claimId,
+      });
+
+      await ctx.scheduler.runAfter(msg.visibilityTimeoutMs, internal.lib.reclaimStale, {
+        messageId: msg._id as string,
+        claimId,
+      });
+
+      claimed.push({
+        id: msg._id as string,
+        claimId,
+        payload: msg.payload,
+        attempts,
+      });
+    }
+
+    return claimed;
+  },
+});

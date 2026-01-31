@@ -1,5 +1,5 @@
 import type { FunctionReference } from "convex/server";
-import type { ClaimedMessage } from "./index.js";
+import type { ClaimedMessage, PendingMessage } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -236,6 +236,228 @@ export function consumePolling<T>(
       }
 
       // Wait before next poll.
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, pollIntervalMs);
+        controller.signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }
+  };
+
+  void poll();
+  return controller;
+}
+
+// ---------------------------------------------------------------------------
+// Filtered consumers (for custom queries)
+// ---------------------------------------------------------------------------
+
+/**
+ * References for filtered consumption.
+ * Uses a custom query that returns filtered pending messages,
+ * and claimByIds to claim specific messages.
+ */
+export interface FilteredQueueFunctions<T> {
+  /** Custom query that returns filtered pending messages */
+  list: FunctionReference<"query", any, any, PendingMessage<T>[]>;
+  /** Claim specific messages by ID */
+  claimByIds: FunctionReference<"mutation", any, any, ClaimedMessage<T>[]>;
+  ack: FunctionReference<"mutation", any, any, null>;
+  nack: FunctionReference<"mutation", any, any, any>;
+}
+
+export interface ConsumeFilteredOptions {
+  /** Maximum messages to claim per batch. Defaults to 10. */
+  batchSize?: number;
+}
+
+export interface ConsumeFilteredPollingOptions extends ConsumeFilteredOptions {
+  /** Polling interval in milliseconds. Defaults to 1000. */
+  pollIntervalMs?: number;
+}
+
+/**
+ * Consume messages using a custom filtered query.
+ *
+ * Subscribe to your custom query that returns filtered pending messages,
+ * then claim and process only those messages.
+ *
+ * @example
+ * ```ts
+ * // In your Convex app, define a filtered query:
+ * export const getTasksForWorker = query({
+ *   args: { worker: v.string() },
+ *   handler: async (ctx, args) => {
+ *     const pending = await taskQueue.listPending(ctx);
+ *     return pending.filter(msg => msg.payload.worker === args.worker);
+ *   },
+ * });
+ *
+ * // Then consume with filtering:
+ * const stop = consumeFiltered(
+ *   client,
+ *   {
+ *     list: api.taskQueue.getTasksForWorker,
+ *     claimByIds: api.taskQueue.claimByIds,
+ *     ack: api.taskQueue.ack,
+ *     nack: api.taskQueue.nack,
+ *   },
+ *   { worker: "worker-1" },  // args for your custom query
+ *   async (messages) => {
+ *     for (const msg of messages) {
+ *       await processTask(msg.payload);
+ *     }
+ *   },
+ * );
+ * ```
+ */
+export function consumeFiltered<T, Args extends Record<string, unknown>>(
+  client: ConvexSubscriptionClient,
+  fns: FilteredQueueFunctions<T>,
+  queryArgs: Args,
+  handler: (messages: ClaimedMessage<T>[]) => Promise<void>,
+  options?: ConsumeFilteredOptions,
+): () => void {
+  const { batchSize = 10 } = options ?? {};
+  let processing = false;
+  let pendingMessages: PendingMessage<T>[] = [];
+
+  const processLoop = async () => {
+    if (processing) return;
+    processing = true;
+    try {
+      while (pendingMessages.length > 0) {
+        // Take up to batchSize message IDs to claim
+        const toClaim = pendingMessages.slice(0, batchSize);
+        const messageIds = toClaim.map((m) => m.id);
+
+        const claimed = (await client.mutation(fns.claimByIds, {
+          messageIds,
+        })) as ClaimedMessage<T>[];
+
+        if (claimed.length === 0) {
+          // All were claimed by another consumer, wait for next update
+          pendingMessages = [];
+          break;
+        }
+
+        // Remove claimed messages from our pending list
+        const claimedIds = new Set(claimed.map((m) => m.id));
+        pendingMessages = pendingMessages.filter((m) => !claimedIds.has(m.id));
+
+        // Try the handler for the whole batch
+        try {
+          await handler(claimed);
+          await Promise.all(
+            claimed.map((msg) =>
+              client.mutation(fns.ack, { messageId: msg.id, claimId: msg.claimId }),
+            ),
+          );
+        } catch {
+          // Batch failed — process individually
+          for (const msg of claimed) {
+            try {
+              await handler([msg]);
+              await client.mutation(fns.ack, { messageId: msg.id, claimId: msg.claimId });
+            } catch (msgError) {
+              const errorStr = msgError instanceof Error ? msgError.message : String(msgError);
+              await client.mutation(fns.nack, {
+                messageId: msg.id,
+                claimId: msg.claimId,
+                error: errorStr,
+              });
+            }
+          }
+        }
+      }
+    } finally {
+      processing = false;
+      if (pendingMessages.length > 0) {
+        void processLoop();
+      }
+    }
+  };
+
+  const unsubscribe = client.onUpdate(fns.list, queryArgs, (result: PendingMessage<T>[]) => {
+    pendingMessages = result;
+    if (pendingMessages.length > 0) {
+      void processLoop();
+    }
+  });
+
+  return unsubscribe;
+}
+
+/**
+ * Polling-based consume with custom filtering.
+ *
+ * @example
+ * ```ts
+ * const controller = consumeFilteredPolling(
+ *   client,
+ *   {
+ *     list: api.taskQueue.getTasksForWorker,
+ *     claimByIds: api.taskQueue.claimByIds,
+ *     ack: api.taskQueue.ack,
+ *     nack: api.taskQueue.nack,
+ *   },
+ *   { worker: "worker-1" },
+ *   async (messages) => {
+ *     for (const msg of messages) {
+ *       await processTask(msg.payload);
+ *     }
+ *   },
+ *   { pollIntervalMs: 2000 },
+ * );
+ * ```
+ */
+export function consumeFilteredPolling<T, Args extends Record<string, unknown>>(
+  client: ConvexPollingClient,
+  fns: FilteredQueueFunctions<T>,
+  queryArgs: Args,
+  handler: (messages: ClaimedMessage<T>[]) => Promise<void>,
+  options?: ConsumeFilteredPollingOptions,
+): AbortController {
+  const { batchSize = 10, pollIntervalMs = 1000 } = options ?? {};
+  const controller = new AbortController();
+
+  const poll = async () => {
+    while (!controller.signal.aborted) {
+      try {
+        const pending = (await client.query(fns.list, queryArgs)) as PendingMessage<T>[];
+
+        if (pending.length > 0) {
+          const toClaim = pending.slice(0, batchSize);
+          const messageIds = toClaim.map((m) => m.id);
+
+          const claimed = (await client.mutation(fns.claimByIds, {
+            messageIds,
+          })) as ClaimedMessage<T>[];
+
+          for (const msg of claimed) {
+            try {
+              await handler([msg]);
+              await client.mutation(fns.ack, { messageId: msg.id, claimId: msg.claimId });
+            } catch (msgError) {
+              const errorStr = msgError instanceof Error ? msgError.message : String(msgError);
+              await client.mutation(fns.nack, {
+                messageId: msg.id,
+                claimId: msg.claimId,
+                error: errorStr,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[convex-mq] poll error:", err);
+      }
+
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, pollIntervalMs);
         controller.signal.addEventListener(

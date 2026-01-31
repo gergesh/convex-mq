@@ -240,6 +240,67 @@ if (hasPending) {
 }
 ```
 
+### Filtered consumption
+
+For workers that need to consume only specific messages (e.g., messages assigned to them), define a custom query that filters pending messages:
+
+```ts
+// convex/taskQueue.ts
+import { MessageQueue } from "convex-mq";
+import { components } from "./_generated/api";
+import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+const taskQueue = new MessageQueue(components.taskQueue, {
+  message: v.object({
+    worker: v.string(),
+    task: v.string(),
+    data: v.any(),
+  }),
+});
+
+// Standard exports
+export const { ack, nack, publish, claimByIds, listPending } = taskQueue.api(query, mutation);
+
+// Custom filtered query — workers subscribe to this
+export const getTasksForWorker = query({
+  args: { worker: v.string() },
+  handler: async (ctx, args) => {
+    const pending = await taskQueue.listPending(ctx);
+    return pending.filter((msg) => msg.payload.worker === args.worker);
+  },
+});
+```
+
+Then consume with `consumeFiltered`:
+
+```ts
+import { ConvexClient } from "convex/browser";
+import { consumeFiltered } from "convex-mq/client";
+import { api } from "../convex/_generated/api.js";
+
+const client = new ConvexClient(process.env.CONVEX_URL!);
+
+// Only process tasks assigned to "worker-1"
+const stop = consumeFiltered(
+  client,
+  {
+    list: api.taskQueue.getTasksForWorker,
+    claimByIds: api.taskQueue.claimByIds,
+    ack: api.taskQueue.ack,
+    nack: api.taskQueue.nack,
+  },
+  { worker: "worker-1" },
+  async (messages) => {
+    for (const msg of messages) {
+      console.log(`Processing task: ${msg.payload.task}`);
+    }
+  },
+);
+```
+
+This pattern allows arbitrary filtering logic — filter by worker, priority, message type, or any combination. The subscription is reactive: when new matching messages appear, the consumer is notified immediately.
+
 ## How It Works
 
 ### Message lifecycle
@@ -278,7 +339,7 @@ new MessageQueue(component, {
 
 #### `.api(query, mutation)`
 
-Returns typed Convex function exports: `{ peek, claim, ack, nack, publish, publishBatch }`.
+Returns typed Convex function exports: `{ peek, claim, ack, nack, publish, publishBatch, listPending, claimByIds }`.
 
 #### `.publish(ctx, payload)`
 
@@ -304,6 +365,14 @@ Acknowledge a message — deletes it from the queue.
 
 Reject a message. Returns it to pending for retry. If retries are exhausted, deletes the message and returns `{ exhausted: true, payload, attempts, error }`.
 
+#### `.listPending(ctx, limit?) → PendingMessage<T>[]`
+
+List up to `limit` (default 100) pending messages. Use this to build custom filtered queries. Returns an array of pending messages with `id`, `payload`, and `attempts`.
+
+#### `.claimByIds(ctx, messageIds) → ClaimedMessage<T>[]`
+
+Claim specific messages by their IDs. Use after filtering messages from `listPending`. Messages that are no longer pending are silently skipped.
+
 ### `consume(client, fns, handler, options?)`
 
 Reactive consumer using `ConvexClient` subscriptions.
@@ -318,6 +387,27 @@ Returns a `stop()` function.
 ### `consumePolling(client, fns, handler, options?)`
 
 Polling-based consumer using `ConvexHttpClient`.
+
+- `options.batchSize` — max messages per claim (default 10)
+- `options.pollIntervalMs` — polling interval (default 1000)
+
+Returns an `AbortController`.
+
+### `consumeFiltered(client, fns, queryArgs, handler, options?)`
+
+Reactive consumer using a custom filtered query.
+
+- `client` — `ConvexClient` instance
+- `fns` — object with `{ list, claimByIds, ack, nack }` function references
+- `queryArgs` — arguments to pass to the custom list query
+- `handler` — `async (messages: ClaimedMessage<T>[]) => void`
+- `options.batchSize` — max messages per claim (default 10)
+
+Returns a `stop()` function.
+
+### `consumeFilteredPolling(client, fns, queryArgs, handler, options?)`
+
+Polling-based consumer with custom filtering.
 
 - `options.batchSize` — max messages per claim (default 10)
 - `options.pollIntervalMs` — polling interval (default 1000)

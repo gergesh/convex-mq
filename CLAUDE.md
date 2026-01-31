@@ -48,8 +48,9 @@ examples/               Example JS consumer scripts
 - **One message type per queue instance** — multiple types = multiple `app.use(messageQueue, { name: "x" })` in the host's `convex.config.ts`. Each instance gets an isolated table.
 - **claimId lease tokens** — each claim() generates a random claimId. ack/nack must provide the matching claimId. If a visibility timeout fires and another consumer reclaims the message, the original consumer's claimId is invalidated, preventing stale ack/nack race conditions.
 - **reclaimStale always returns to pending** — the scheduled visibility timeout handler never deletes messages. Only explicit nack can exhaust retries. This prevents silent message loss.
-- **api() generates all exports** — `MessageQueue.api(query, mutation)` returns `{ peek, claim, ack, nack, publish, publishBatch }` with full type safety, eliminating ~50 lines of boilerplate per queue. `V` is constrained to `VObject` so publish args are flat (validator fields spread as top-level args).
+- **api() generates all exports** — `MessageQueue.api(query, mutation)` returns `{ peek, claim, ack, nack, publish, publishBatch, listPending, claimByIds }` with full type safety, eliminating ~50 lines of boilerplate per queue. `V` is constrained to `VObject` so publish args are flat (validator fields spread as top-level args).
 - **consume() takes the module directly** — `consume(client, api.emailQueue, handler)` instead of spelling out 4 function references. `QueueFunctions<T>` is generic so payload types flow from function refs into the handler.
+- **Custom filtering via listPending/claimByIds** — users write their own filtered queries using `listPending()` and claim specific messages with `claimByIds()`. The `consumeFiltered()` helper subscribes to custom queries and processes only matching messages.
 
 ## Testing
 
