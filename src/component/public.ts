@@ -80,13 +80,19 @@ export const peek = query({
 });
 
 /**
- * Atomically claim up to `limit` pending messages.
+ * Atomically claim pending messages.
+ * 
+ * If `messageIds` is provided, claims those specific messages (silently
+ * skipping any that are no longer pending). Otherwise, claims up to `limit`
+ * pending messages in FIFO order.
+ * 
  * Each claimed message gets a unique `claimId` — ack/nack must
  * provide this claimId to prove they own the lease.
  */
 export const claim = mutation({
   args: {
     limit: v.optional(v.number()),
+    messageIds: v.optional(v.array(v.string())),
   },
   returns: v.array(
     v.object({
@@ -97,12 +103,6 @@ export const claim = mutation({
     }),
   ),
   handler: async (ctx, args) => {
-    const limit = args.limit ?? 1;
-    const pending = await ctx.db
-      .query("messages")
-      .withIndex("by_status", (q) => q.eq("status", "pending"))
-      .take(limit);
-
     const claimed: Array<{
       id: string;
       claimId: string;
@@ -110,26 +110,65 @@ export const claim = mutation({
       attempts: number;
     }> = [];
 
-    for (const msg of pending) {
-      const attempts = msg.attempts + 1;
-      const claimId = generateClaimId();
-      await ctx.db.patch(msg._id, {
-        status: "claimed",
-        attempts,
-        claimId,
-      });
+    if (args.messageIds !== undefined) {
+      // Claim specific messages by ID
+      for (const messageId of args.messageIds) {
+        const id = ctx.db.normalizeId("messages", messageId);
+        if (id === null) continue;
 
-      await ctx.scheduler.runAfter(msg.visibilityTimeoutMs, internal.lib.reclaimStale, {
-        messageId: msg._id as string,
-        claimId,
-      });
+        const msg = await ctx.db.get(id);
+        if (msg === null) continue;
+        if (msg.status !== "pending") continue;
 
-      claimed.push({
-        id: msg._id as string,
-        claimId,
-        payload: msg.payload,
-        attempts,
-      });
+        const attempts = msg.attempts + 1;
+        const claimId = generateClaimId();
+        await ctx.db.patch(msg._id, {
+          status: "claimed",
+          attempts,
+          claimId,
+        });
+
+        await ctx.scheduler.runAfter(msg.visibilityTimeoutMs, internal.lib.reclaimStale, {
+          messageId: msg._id as string,
+          claimId,
+        });
+
+        claimed.push({
+          id: msg._id as string,
+          claimId,
+          payload: msg.payload,
+          attempts,
+        });
+      }
+    } else {
+      // Claim next N pending messages
+      const limit = args.limit ?? 1;
+      const pending = await ctx.db
+        .query("messages")
+        .withIndex("by_status", (q) => q.eq("status", "pending"))
+        .take(limit);
+
+      for (const msg of pending) {
+        const attempts = msg.attempts + 1;
+        const claimId = generateClaimId();
+        await ctx.db.patch(msg._id, {
+          status: "claimed",
+          attempts,
+          claimId,
+        });
+
+        await ctx.scheduler.runAfter(msg.visibilityTimeoutMs, internal.lib.reclaimStale, {
+          messageId: msg._id as string,
+          claimId,
+        });
+
+        claimed.push({
+          id: msg._id as string,
+          claimId,
+          payload: msg.payload,
+          attempts,
+        });
+      }
     }
 
     return claimed;
@@ -245,65 +284,5 @@ export const listPending = query({
       payload: msg.payload,
       attempts: msg.attempts,
     }));
-  },
-});
-
-/**
- * Claim specific messages by their IDs.
- *
- * Use this after filtering messages from `listPending` to claim
- * only the ones you want. Messages that are no longer pending
- * (already claimed by another consumer) are silently skipped.
- */
-export const claimByIds = mutation({
-  args: {
-    messageIds: v.array(v.string()),
-  },
-  returns: v.array(
-    v.object({
-      id: v.string(),
-      claimId: v.string(),
-      payload: v.any(),
-      attempts: v.number(),
-    }),
-  ),
-  handler: async (ctx, args) => {
-    const claimed: Array<{
-      id: string;
-      claimId: string;
-      payload: unknown;
-      attempts: number;
-    }> = [];
-
-    for (const messageId of args.messageIds) {
-      const id = ctx.db.normalizeId("messages", messageId);
-      if (id === null) continue;
-
-      const msg = await ctx.db.get(id);
-      if (msg === null) continue;
-      if (msg.status !== "pending") continue;
-
-      const attempts = msg.attempts + 1;
-      const claimId = generateClaimId();
-      await ctx.db.patch(msg._id, {
-        status: "claimed",
-        attempts,
-        claimId,
-      });
-
-      await ctx.scheduler.runAfter(msg.visibilityTimeoutMs, internal.lib.reclaimStale, {
-        messageId: msg._id as string,
-        claimId,
-      });
-
-      claimed.push({
-        id: msg._id as string,
-        claimId,
-        payload: msg.payload,
-        attempts,
-      });
-    }
-
-    return claimed;
   },
 });

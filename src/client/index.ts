@@ -21,7 +21,6 @@ type PublicApi = {
     ack: FunctionReference<"mutation", "internal", any, any>;
     nack: FunctionReference<"mutation", "internal", any, any>;
     listPending: FunctionReference<"query", "internal", any, any>;
-    claimByIds: FunctionReference<"mutation", "internal", any, any>;
   };
 };
 
@@ -144,8 +143,12 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
       }),
 
       claim: mutation({
-        args: { limit: v.optional(v.number()) },
-        handler: async (ctx, args) => self.claim(ctx, args.limit),
+        args: {
+          limit: v.optional(v.number()),
+          messageIds: v.optional(v.array(v.string())),
+        },
+        handler: async (ctx, args) =>
+          self.claim(ctx, { limit: args.limit, messageIds: args.messageIds as string[] }),
       }),
 
       ack: mutation({
@@ -175,11 +178,6 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
       listPending: query({
         args: { limit: v.optional(v.number()) },
         handler: async (ctx, args) => self.listPending(ctx, args.limit),
-      }),
-
-      claimByIds: mutation({
-        args: { messageIds: v.array(v.string()) },
-        handler: async (ctx, args) => self.claimByIds(ctx, args.messageIds),
       }),
     };
   }
@@ -219,9 +217,32 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
     return await ctx.runQuery(this.component.public.peek, {});
   }
 
-  /** Claim up to `limit` messages for processing. */
-  async claim(ctx: RunMutationCtx, limit?: number): Promise<ClaimedMessage<Payload>[]> {
-    const raw = await ctx.runMutation(this.component.public.claim, { limit });
+  /**
+   * Claim pending messages for processing.
+   *
+   * If `messageIds` is provided, claims those specific messages (silently
+   * skipping any that are no longer pending). Otherwise, claims up to `limit`
+   * pending messages in FIFO order.
+   *
+   * @example
+   * ```ts
+   * // Claim next 5 pending messages
+   * const messages = await queue.claim(ctx, { limit: 5 });
+   *
+   * // Claim specific messages by ID (after filtering)
+   * const pending = await queue.listPending(ctx);
+   * const filtered = pending.filter(m => m.payload.worker === "worker-1");
+   * const messages = await queue.claim(ctx, { messageIds: filtered.map(m => m.id) });
+   * ```
+   */
+  async claim(
+    ctx: RunMutationCtx,
+    options?: { limit?: number; messageIds?: (MessageId | string)[] },
+  ): Promise<ClaimedMessage<Payload>[]> {
+    const raw = await ctx.runMutation(this.component.public.claim, {
+      limit: options?.limit,
+      messageIds: options?.messageIds as string[] | undefined,
+    });
     return raw as ClaimedMessage<Payload>[];
   }
 
@@ -261,7 +282,7 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
    * List pending messages for custom filtering.
    *
    * Use this in your own queries to implement custom filtering logic.
-   * The returned messages can be filtered and then claimed with `claimByIds`.
+   * The returned messages can be filtered and then claimed with `claim({ messageIds })`.
    *
    * @example
    * ```ts
@@ -278,35 +299,5 @@ export class MessageQueue<V extends VObject<any, any, any>, Payload = Infer<V>> 
   async listPending(ctx: RunQueryCtx, limit?: number): Promise<PendingMessage<Payload>[]> {
     const raw = await ctx.runQuery(this.component.public.listPending, { limit });
     return raw as PendingMessage<Payload>[];
-  }
-
-  /**
-   * Claim specific messages by their IDs.
-   *
-   * Use this after filtering messages from `listPending` to claim
-   * only the ones you want. Messages that are no longer pending
-   * (already claimed by another consumer) are silently skipped.
-   *
-   * @example
-   * ```ts
-   * // Custom mutation that claims filtered messages
-   * export const claimTasksForWorker = mutation({
-   *   args: { worker: v.string(), limit: v.optional(v.number()) },
-   *   handler: async (ctx, args) => {
-   *     const pending = await taskQueue.listPending(ctx, args.limit ?? 10);
-   *     const matching = pending.filter(msg => msg.payload.worker === args.worker);
-   *     return await taskQueue.claimByIds(ctx, matching.map(m => m.id));
-   *   },
-   * });
-   * ```
-   */
-  async claimByIds(
-    ctx: RunMutationCtx,
-    messageIds: (MessageId | string)[],
-  ): Promise<ClaimedMessage<Payload>[]> {
-    const raw = await ctx.runMutation(this.component.public.claimByIds, {
-      messageIds: messageIds as string[],
-    });
-    return raw as ClaimedMessage<Payload>[];
   }
 }
