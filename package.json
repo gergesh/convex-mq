@@ -1,0 +1,67 @@
+{
+  "name": "convex-mq",
+  "version": "0.1.0",
+  "private": false,
+  "description": "A typed message queue component for Convex with reactive consumers, visibility timeouts, and automatic retries.",
+  "keywords": [
+    "component",
+    "convex",
+    "message-queue",
+    "mq",
+    "queue",
+    "reactive",
+    "real-time"
+  ],
+  "license": "MIT",
+  "author": "gergesh",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gergesh/convex-mq.git"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "main": "./dist/client/index.js",
+  "types": "./dist/client/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/client/index.d.ts",
+      "default": "./dist/client/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/client.d.ts",
+      "default": "./dist/client/client.js"
+    },
+    "./convex.config": {
+      "types": "./src/component/convex.config.ts",
+      "default": "./src/component/convex.config.ts"
+    },
+    "./convex.config.js": {
+      "types": "./src/component/convex.config.ts",
+      "default": "./src/component/convex.config.ts"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "test": "bunx vitest run",
+    "prepare": "bun run build"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.1.0",
+    "convex": "^1.31.7",
+    "convex-test": "^0.0.41",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "convex": "^1.31.0"
+  }
+}
